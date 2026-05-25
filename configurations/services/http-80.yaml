@@ -2,6 +2,10 @@ apiVersion: "v1"
 protocol: "http"
 address: ":6006"
 description: "Wordpress 6.0"
+httpCache:
+  enabled: true
+  redisAddr: "127.0.0.1:6380"
+  ttlSeconds: 86400
 commands:
   - regex: "^(/index.php|/index.html|/)$"
     handler:
