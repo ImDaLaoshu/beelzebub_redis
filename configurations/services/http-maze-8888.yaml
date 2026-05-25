@@ -6,7 +6,7 @@ serverVersion: "Apache/2.4.41 (Ubuntu)"
 serverName: "files.internal.company.com"
 httpCache:
   enabled: true
-  redisAddr: "redis:6379"
+  redisAddr: "127.0.0.1:6380"
   ttlSeconds: 86400
 commands:
   - regex: "^/icons/blank\\.svg$"
