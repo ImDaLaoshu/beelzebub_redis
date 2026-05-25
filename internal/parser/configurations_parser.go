@@ -69,6 +69,15 @@ type Plugin struct {
 	RateLimitWindowSeconds  int    `yaml:"rateLimitWindowSeconds"`
 }
 
+// HTTPCache configures Redis-backed caching for generated HTTP responses.
+type HTTPCache struct {
+	Enabled    bool   `yaml:"enabled"`
+	RedisAddr  string `yaml:"redisAddr"`
+	RedisPass  string `yaml:"redisPass"`
+	RedisDB    int    `yaml:"redisDB"`
+	TTLSeconds int    `yaml:"ttlSeconds"`
+}
+
 // BeelzebubServiceConfiguration is the struct that contains the configurations of the honeypot service
 type BeelzebubServiceConfiguration struct {
 	ApiVersion             string    `yaml:"apiVersion"`
@@ -84,6 +93,7 @@ type BeelzebubServiceConfiguration struct {
 	Description            string    `yaml:"description"`
 	Banner                 string    `yaml:"banner"`
 	Plugin                 Plugin    `yaml:"plugin"`
+	HTTPCache              HTTPCache `yaml:"httpCache"`
 	TLSCertPath            string    `yaml:"tlsCertPath"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath"`
 	// TrustedProxies is a list of CIDRs (or bare IPs) of upstream proxies whose

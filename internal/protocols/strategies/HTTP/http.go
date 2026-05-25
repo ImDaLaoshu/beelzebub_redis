@@ -27,6 +27,7 @@ type httpResponse struct {
 
 func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
 	serverMux := http.NewServeMux()
+	pageCache := newHTTPPageCache(servConf.HTTPCache)
 
 	serverMux.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		var matched bool
@@ -36,7 +37,7 @@ func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfigurat
 			var err error
 			matched = command.Regex.MatchString(request.RequestURI)
 			if matched {
-				resp, err = buildHTTPResponse(servConf, tr, command, request)
+				resp, err = buildHTTPResponseWithCache(servConf, tr, command, request, pageCache)
 				if err != nil {
 					log.Errorf("error building http response: %s: %v", request.RequestURI, err)
 					resp.StatusCode = 500
@@ -50,7 +51,7 @@ func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfigurat
 		if !matched {
 			command := servConf.FallbackCommand
 			if command.Handler != "" || command.Plugin != "" {
-				resp, err = buildHTTPResponse(servConf, tr, command, request)
+				resp, err = buildHTTPResponseWithCache(servConf, tr, command, request, pageCache)
 				if err != nil {
 					log.Errorf("error building http response: %s: %v", request.RequestURI, err)
 					resp.StatusCode = 500
@@ -86,6 +87,10 @@ func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfigurat
 }
 
 func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, command parser.Command, request *http.Request) (httpResponse, error) {
+	return buildHTTPResponseWithCache(servConf, tr, command, request, nil)
+}
+
+func buildHTTPResponseWithCache(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, command parser.Command, request *http.Request, pageCache httpPageCache) (httpResponse, error) {
 	resp := httpResponse{
 		Body:       command.Handler,
 		Headers:    command.Headers,
@@ -101,6 +106,17 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 	traceRequest(request, tr, command, servConf.Description, body, servConf.TrustedProxiesNets)
 
 	if command.Plugin != "" {
+		cacheKey := ""
+		if pageCache != nil {
+			cacheKey = httpCacheKey(servConf, command, request, body)
+			cachedResp, ok, err := pageCache.Get(request.Context(), cacheKey)
+			if err != nil {
+				log.Warnf("http response cache get failed for %s: %v", request.RequestURI, err)
+			} else if ok {
+				return cachedResp, nil
+			}
+		}
+
 		host, _ := realClientAddr(request, servConf.TrustedProxiesNets)
 
 		if cp, ok := plugin.GetCommand(command.Plugin); ok {
@@ -143,6 +159,12 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 			}
 		} else {
 			log.Warnf("unknown plugin %q, skipping", command.Plugin)
+		}
+
+		if pageCache != nil && cacheKey != "" {
+			if err := pageCache.Set(request.Context(), cacheKey, resp); err != nil {
+				log.Warnf("http response cache set failed for %s: %v", request.RequestURI, err)
+			}
 		}
 	}
 

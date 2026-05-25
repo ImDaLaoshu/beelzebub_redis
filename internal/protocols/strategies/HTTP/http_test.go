@@ -1,6 +1,7 @@
 package HTTP
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,27 @@ type mockTracer struct {
 
 func (m *mockTracer) TraceEvent(event tracer.Event) {
 	m.events = append(m.events, event)
+}
+
+type fakePageCache struct {
+	responses map[string]httpResponse
+	gets      int
+	sets      int
+}
+
+func (f *fakePageCache) Get(_ context.Context, key string) (httpResponse, bool, error) {
+	f.gets++
+	resp, ok := f.responses[key]
+	return resp, ok, nil
+}
+
+func (f *fakePageCache) Set(_ context.Context, key string, resp httpResponse) error {
+	f.sets++
+	if f.responses == nil {
+		f.responses = map[string]httpResponse{}
+	}
+	f.responses[key] = resp
+	return nil
 }
 
 func TestBuildHTTPResponse_Basic(t *testing.T) {
@@ -156,6 +178,74 @@ func TestBuildHTTPResponse_MazePlugin(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
+}
+
+func TestBuildHTTPResponseWithCache_HitSkipsPluginGeneration(t *testing.T) {
+	tr := &mockTracer{}
+	servConf := parser.BeelzebubServiceConfiguration{
+		Address:     ":8888",
+		Description: "test-cache",
+	}
+	cmd := parser.Command{Plugin: "unknown-plugin"}
+	req := httptest.NewRequest("GET", "http://localhost/admin?id=1", nil)
+	key := httpCacheKey(servConf, cmd, req, "")
+	cache := &fakePageCache{
+		responses: map[string]httpResponse{
+			key: {
+				StatusCode: http.StatusAccepted,
+				Headers:    []string{"X-Cache-Test: hit"},
+				Body:       "cached page",
+			},
+		},
+	}
+
+	resp, err := buildHTTPResponseWithCache(servConf, tr, cmd, req, cache)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+	assert.Equal(t, []string{"X-Cache-Test: hit"}, resp.Headers)
+	assert.Equal(t, "cached page", resp.Body)
+	assert.Equal(t, 1, cache.gets)
+	assert.Equal(t, 0, cache.sets)
+	require.Len(t, tr.events, 1, "cache hits should still trace the request")
+}
+
+func TestBuildHTTPResponseWithCache_MissStoresGeneratedPluginResponse(t *testing.T) {
+	tr := &mockTracer{}
+	servConf := parser.BeelzebubServiceConfiguration{
+		Address:       ":8888",
+		Description:   "test-cache",
+		ServerName:    "TestServer",
+		ServerVersion: "1.0",
+	}
+	cmd := parser.Command{Plugin: plugins.MazePluginName}
+	req := httptest.NewRequest("GET", "http://localhost/reports/", nil)
+	cache := &fakePageCache{}
+
+	resp, err := buildHTTPResponseWithCache(servConf, tr, cmd, req, cache)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEmpty(t, resp.Body)
+	assert.Equal(t, 1, cache.gets)
+	assert.Equal(t, 1, cache.sets)
+	key := httpCacheKey(servConf, cmd, req, "")
+	assert.Equal(t, resp, cache.responses[key])
+}
+
+func TestHTTPCacheKeyIncludesRequestURIAndBody(t *testing.T) {
+	servConf := parser.BeelzebubServiceConfiguration{Address: ":8888"}
+	cmd := parser.Command{Plugin: plugins.MazePluginName}
+	req1 := httptest.NewRequest("POST", "http://localhost/item?id=1", nil)
+	req2 := httptest.NewRequest("POST", "http://localhost/item?id=2", nil)
+
+	key1 := httpCacheKey(servConf, cmd, req1, "payload")
+	key2 := httpCacheKey(servConf, cmd, req2, "payload")
+	key3 := httpCacheKey(servConf, cmd, req1, "different")
+
+	assert.NotEqual(t, key1, key2)
+	assert.NotEqual(t, key1, key3)
+	assert.True(t, strings.HasPrefix(key1, "beelzebub:http-page:"))
 }
 
 func TestMapHeaderToString_Empty(t *testing.T) {
