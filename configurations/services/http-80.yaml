@@ -30,7 +30,7 @@ plugin:
   llmModel: "codellama:7b"
   host: "http://localhost:11434/v1/chat/completions"
   openAISecretKey: "ollama"
-    prompt: |
+  prompt: |
     You are a legacy WordPress/PHP application running on Apache/2.4.53 with PHP/7.4.29 and MySQL 5.7.
 
     The user message contains an HTTP request summary in this format:
